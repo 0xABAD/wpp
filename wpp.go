@@ -29,7 +29,6 @@ var (
 	OptDevport    uint
 	OptTemplate   string
 	OptIgnore     string
-	ProgWebSocket *websocket.Conn
 )
 
 func init() {
@@ -121,6 +120,9 @@ func main() {
 			ready       = make(chan struct{})
 			done        = make(chan struct{})
 			interrupt   = make(chan os.Signal, 1)
+			newconn     = make(chan *websocket.Conn)
+			connclosed  = make(chan *websocket.Conn)
+			conns       = make(map[*websocket.Conn]bool)
 			ignore      *regexp.Regexp
 		)
 		defer close(done)
@@ -191,6 +193,10 @@ func main() {
 				isReady = true
 			case <-interrupt:
 				interrupted = true
+			case c := <-newconn:
+				conns[c] = true
+			case c := <-connclosed:
+				delete(conns, c)
 			}
 
 			if isReady && pending && !interrupted {
@@ -227,7 +233,7 @@ func main() {
 								served = true
 
 								http.HandleFunc("/", index)
-								http.HandleFunc("/wpphotreload", reload)
+								http.HandleFunc("/wpphotreload", reload(newconn, connclosed))
 
 								go (func() {
 									err = http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
@@ -242,15 +248,13 @@ func main() {
 										OpenBrowserCommand,
 										OptOutfile))
 								}
-							} else if ProgWebSocket != nil {
-								msgt := websocket.TextMessage
-								msg := []byte("reload")
-
-								if err = ProgWebSocket.WriteMessage(msgt, msg); err != nil {
-									elog(`Failed to write "reload" web socket message`, err)
-								}
 							} else {
-								elog("ProgWebSocket is nil, can't write messages")
+								for c, _ := range conns {
+									t := websocket.TextMessage
+									if err = c.WriteMessage(t, []byte("reload")); err != nil {
+										elog(`Failed to write "reload" web socket message`, err)
+									}
+								}
 							}
 						} else {
 							fmt.Println() // additional newline
@@ -375,45 +379,48 @@ func index(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func reload(w http.ResponseWriter, r *http.Request) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-
-	var err error
-	ProgWebSocket, err = upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		elog("Could not updgrade HTTP request to websocket --", err)
-		return
-	}
-	defer ProgWebSocket.Close()
-
-	for {
-		msgtype, msg, err := ProgWebSocket.ReadMessage()
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				vlog("Websocket connection closed --", err)
-				return
-			} else {
-				elog("Error reading web socket message --", err)
-			}
-		} else {
-			var result string
-
-			switch msgtype {
-			case websocket.TextMessage:
-				result = fmt.Sprintf("Received web socket text message: %s", msg)
-			case websocket.BinaryMessage:
-				result = "Received web socket binary message"
-			case websocket.CloseMessage:
-				result = "Received web socket close message"
-			case websocket.PingMessage:
-				result = "Received web socket ping message"
-			case websocket.PongMessage:
-				result = "Received web socket pong message"
-			}
-			vlog(result)
+func reload(newconn, connclosed chan<- *websocket.Conn) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
 		}
+
+		sock, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			elog("Could not updgrade HTTP request to websocket --", err)
+			return
+		}
+		defer sock.Close()
+
+		newconn <- sock
+		for {
+			msgtype, msg, err := sock.ReadMessage()
+			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					vlog("Websocket connection closed --", err)
+					break
+				} else {
+					elog("Error reading web socket message --", err)
+				}
+			} else {
+				var result string
+
+				switch msgtype {
+				case websocket.TextMessage:
+					result = fmt.Sprintf("Received web socket text message: %s", msg)
+				case websocket.BinaryMessage:
+					result = "Received web socket binary message"
+				case websocket.CloseMessage:
+					result = "Received web socket close message"
+				case websocket.PingMessage:
+					result = "Received web socket ping message"
+				case websocket.PongMessage:
+					result = "Received web socket pong message"
+				}
+				vlog(result)
+			}
+		}
+		connclosed <- sock
 	}
 }
 
