@@ -31,13 +31,9 @@ hot reload the contents.
 Building
 --------
 
-Wpp has the following dependencies:
-
-* [filewatch](https://www.github.com/0xABAD/filewatch)
-* [websocket](https://www.github.com/gorilla/websocket)
-
-Run `go get` for those packages and then `go install` for this one to
-build this repo.
+* `$ go get -d github.com/0xABAD/wpp`
+* `$ cd $GOPATH/src/github.com/0xABAD/wpp`
+* `$ go run getand/install.go`
 
 Usage
 -----
