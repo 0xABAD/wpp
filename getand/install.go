@@ -13,7 +13,7 @@ import (
 )
 
 var dependencies = [...]Dep{
-	Dep{Repo: "github.com/0xABAD/filewatch", Branch: "v0.1.0"},
+	Dep{Repo: "github.com/0xABAD/filewatch", Branch: "v0.1.1"},
 	Dep{Repo: "github.com/gorilla/websocket", Branch: "v1.2.0"},
 }
 
